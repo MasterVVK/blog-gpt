@@ -1,30 +1,28 @@
-import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import openai
 import requests
-from config import OPENAI_API_KEY, NEWSAPI_KEY, PROXY_URL
+from config import OPENAI_API_KEY, NEWSAPI_KEY, PROXY_URL  # Импортируем ключи и прокси из config
 
 app = FastAPI()
 
-# Получаем API ключи из переменных окружения
-openai.api_key = os.environ.get("OPENAI_API_KEY")
-newsapi_key = os.environ.get("NEWSAPI_KEY")
-proxy_url = os.environ.get("PROXY_URL")  # Получаем прокси-сервер из переменной окружения
+# Настройка API ключей и прокси
+openai.api_key = OPENAI_API_KEY
+newsapi_key = NEWSAPI_KEY
+proxy_url = PROXY_URL
 
 if not openai.api_key:
-    raise ValueError("Переменная окружения OPENAI_API_KEY не установлена")
+    raise ValueError("Переменная OPENAI_API_KEY не установлена")
 if not newsapi_key:
-    raise ValueError("Переменная окружения NEWSAPI_KEY не установлена")
+    raise ValueError("Переменная NEWSAPI_KEY не установлена")
 if not proxy_url:
-    raise ValueError("Переменная окружения PROXY_URL не установлена")
+    raise ValueError("Переменная PROXY_URL не установлена")
 
 # Настройка прокси
 proxies = {
     "http": proxy_url,
     "https": proxy_url,
 }
-
 
 class Topic(BaseModel):
     topic: str
@@ -40,34 +38,50 @@ def get_recent_news(topic):
     recent_news = [article["title"] for article in articles[:1]]
     return "\n".join(recent_news)
 
+def openai_request(model, messages, max_tokens, temperature):
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature
+    }
+
+    response = requests.post(url, headers=headers, json=payload, proxies=proxies)
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"Ошибка при запросе к OpenAI: {response.text}")
+    return response.json()
+
 def generate_post(topic):
     recent_news = get_recent_news(topic)
 
     # Генерация заголовка
     prompt_title = f"Придумайте привлекательный заголовок для поста на тему: {topic}"
     try:
-        response_title = openai.ChatCompletion.create(
+        response_title = openai_request(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt_title}],
             max_tokens=50,
-            n=1,
-            temperature=0.7,
+            temperature=0.7
         )
-        title = response_title.choices[0].message.content.strip()
+        title = response_title["choices"][0]["message"]["content"].strip()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при генерации заголовка: {str(e)}")
 
     # Генерация мета-описания
     prompt_meta = f"Напишите краткое, но информативное мета-описание для поста с заголовком: {title}"
     try:
-        response_meta = openai.ChatCompletion.create(
+        response_meta = openai_request(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt_meta}],
             max_tokens=100,
-            n=1,
-            temperature=0.7,
+            temperature=0.7
         )
-        meta_description = response_meta.choices[0].message.content.strip()
+        meta_description = response_meta["choices"][0]["message"]["content"].strip()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при генерации мета-описания: {str(e)}")
 
@@ -78,14 +92,13 @@ def generate_post(topic):
         "Используйте короткие абзацы, подзаголовки, примеры и ключевые слова для лучшего восприятия и SEO-оптимизации."
     )
     try:
-        response_post = openai.ChatCompletion.create(
+        response_post = openai_request(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt_post}],
             max_tokens=1000,
-            n=1,
-            temperature=0.7,
+            temperature=0.7
         )
-        post_content = response_post.choices[0].message.content.strip()
+        post_content = response_post["choices"][0]["message"]["content"].strip()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при генерации контента поста: {str(e)}")
 
